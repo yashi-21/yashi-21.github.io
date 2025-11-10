@@ -1,0 +1,1747 @@
+<!DOCTYPE html>
+<html lang="ja">
+
+<head>
+    <meta charset="UTF-8">
+    <title>SVG 編集（整理版）</title>
+    <style>
+        html,
+        body {
+            margin: 0;
+            height: 100%;
+            font-family: sans-serif;
+        }
+
+        #toolbar {
+            background: #143;
+            color: #f8f4fe;
+            display: flex;
+            flex-wrap: wrap;
+            padding: 5px;
+            gap: 10px;
+            align-items: center;
+            position: sticky;
+            top: 0;
+            z-index: 10;
+        }
+
+        #coordsLabel {
+            font-size: 14px;
+            color: #0f0;
+            font-family: monospace;
+            background: #222;
+            padding: 2px 6px;
+            border-radius: 4px;
+            margin: 0 6px;
+        }
+
+        #svgCanvas {
+            border: 1px solid #999;
+            display: block;
+            margin: 10px;
+            background: #f0f0f0;
+            user-select: none;
+        }
+
+        .colorBox {
+            width: 14px;
+            height: 14px;
+            border: 1px solid #84e;
+            cursor: pointer;
+            display: inline-block;
+            vertical-align: middle;
+        }
+
+        /*色の入力を非表示にする*/
+        input[type="color"] {
+            display: none;
+        }
+
+        #resizeHandle {
+            width: 14px;
+            height: 14px;
+            background: #555;
+            position: absolute;
+            cursor: se-resize;
+            border-radius: 3px;
+            z-index: 20;
+            box-shadow: 0 0 0 1px #fff inset, 0 0 2px rgba(0, 0, 0, .3);
+        }
+    </style>
+</head>
+
+<body>
+    <div id="toolbar">
+        <select id="fileSelect">
+            <option disabled selected>ファイル</option>
+            <option value="new">新規</option>
+            <option value="load">読込</option>
+            <option value="save">保存</option>
+            <option value="saveas">名前を付けて保存</option>
+        </select>
+        <span id="coordsLabel">____0,____0</span>
+
+        <div id="textStyles">
+            <label>文字 <input type="number" id="fontSize" value="12" min="8" max="72" style="width:30px;"></label>
+            <label>色:<div id="textColorBox" class="colorBox"></div></label><input type="color" id="textColor"
+                value="#010403">
+            <label>背景:<div id="textBgColorBox" class="colorBox"></div></label><input type="color" id="textBgColor"
+                value="#f8f4fe">
+        </div>
+
+        <input type="text" id="textInput"
+            style="position:absolute;display:none;z-index:50;font-size:12px;font-family:sans-serif;padding:1px;" />
+
+        <button id="endPathBtn">E</button>
+        <select id="shapeSelect">
+            <option value="editBtn">編集</option>
+            <option value="point">点</option>
+            <option value="line" selected>線</option>
+            <option value="polyline">連続線</option>
+            <option value="curveline">連続曲線</option>
+            <option value="rect">矩形</option>
+            <option value="circle">円</option>
+            <option value="arc">円弧</option>
+            <option value="ellipse">楕円</option>
+            <option value="ellipticalArc">楕円弧</option>
+            <option value="qbezier">2次ベジェ</option>
+            <option value="cbezier">3次ベジェ</option>
+            <option value="sin">sin曲線</option>
+            <option value="text">文字表示</option>
+            <option value="eraser">消しゴム</option>
+        </select>
+
+        <button id="closePathBtn">Z</button>
+        <button id="undoBtn">元に戻す</button>
+
+        <div id="lineStyles">
+            <label>線種
+                <select id="strokeStyle">
+                    <option value="solid">実線</option>
+                    <option value="5,6">破線</option>
+                    <option value="1,4">点線</option>
+                </select></label>
+            <label>太さ <input type="number" id="strokeWidth" value="2" min="1" max="143" style="width:30px;"></label>
+            <label>線色:<div id="strokeColorBox" class="colorBox"></div></label>
+            <input type="color" id="strokeColor" value="#0000ff">
+        </div>
+
+        <label>塗色:<div id="fillColorBox" class="colorBox"></div></label>
+        <input type="color" id="fillColor" value="#81f4e3">
+
+        <button id="deleteBtn">削除</button>
+
+        <div id="DirectionalButton">
+            <button id="moveLeftBtn" class="move-btn">←</button>
+            <button id="moveUpBtn" class="move-btn">↑</button>
+            <button id="moveDownBtn" class="move-btn">↓</button>
+            <button id="moveRightBtn" class="move-btn">→</button>
+            <button id="moveX10Btn" class="move-btn">X10</button>
+        </div>
+
+        <div class="canvasSizeInput">
+            W:<input type="number" id="canvasWidth" value="1500" step="1" min="56" style="width:45px;">
+            H:<input type="number" id="canvasHeight" value="750" step="1" min="14" style="width:45px;">
+        </div>
+    </div>
+
+    <svg id="svgCanvas"></svg>
+    <div id="resizeHandle" title="ドラッグでキャンバスをリサイズ"></div>
+    <input type="file" id="fileInput" accept=".svg" style="display:none;">
+
+    <script>
+        const svgCanvas = document.getElementById('svgCanvas');
+        const canvasWidthInput = document.getElementById('canvasWidth');
+        const canvasHeightInput = document.getElementById('canvasHeight');
+        const handle = document.getElementById('resizeHandle');
+        const coordsLabel = document.getElementById('coordsLabel');
+        const shapeSelect = document.getElementById("shapeSelect");
+        const strokeColorInput = document.getElementById("strokeColor");
+        const strokeWidthInput = document.getElementById("strokeWidth");
+        const fillColorInput = document.getElementById("fillColor");
+        const fontSizeInput = document.getElementById("fontSize");
+        const textColorInput = document.getElementById("textColor");
+        const textBgColorInput = document.getElementById("textBgColor");
+        const textInput = document.getElementById("textInput");
+        let isDragging = false, dragStartPoint = null, selectedElement = null, selectionRect = null;
+        let draggingSelection = false;
+        // --- 移動関連 状態 ---
+        let x10Mode = false;   // X10ボタン用
+        let shiftMode = false; // Shiftキー用
+        let undoStack = [];
+        let moveInterval = null; // 移動繰り返し用
+
+        // --- 移動処理 共通 ---
+        function addTranslate(el, dx, dy) {
+            if (!el) return;
+            const t = el.transform.baseVal;
+            let translate;
+            if (t.numberOfItems > 0 && t.getItem(0).type === SVGTransform.SVG_TRANSFORM_TRANSLATE) {
+                translate = t.getItem(0);
+                translate.setTranslate(translate.matrix.e + dx, translate.matrix.f + dy);
+            } else {
+                translate = svgCanvas.createSVGTransform();
+                translate.setTranslate(dx, dy);
+                t.insertItemBefore(translate, 0);
+            }
+        }
+        function getStep() { return (x10Mode || shiftMode) ? 10 : 1; }
+        function startMove(dx, dy) {
+            if (!selectedElement) return;
+            stopMove();
+            moveInterval = setInterval(() => {
+                addTranslate(selectedElement, dx * getStep(), dy * getStep());
+                updateSelectionRect(selectedElement);
+            }, 50);
+        }
+        function stopMove() {
+            if (moveInterval) {
+                clearInterval(moveInterval);
+                moveInterval = null;
+            }
+        }
+
+        // --- 移動ボタン定義 ---
+        const moveBtns = {
+            moveLeftBtn: [-1, 0],
+            moveRightBtn: [1, 0],
+            moveUpBtn: [0, -1],
+            moveDownBtn: [0, 1]
+        };
+
+        for (const id in moveBtns) {
+            const [dx, dy] = moveBtns[id];
+            const btn = document.getElementById(id);
+            btn.addEventListener("mousedown", () => startMove(dx, dy));
+            btn.addEventListener("mouseup", stopMove);
+            btn.addEventListener("mouseleave", stopMove);
+            btn.addEventListener("click", () => {
+                if (selectedElement) {
+                    addTranslate(selectedElement, dx * getStep(), dy * getStep());
+                    updateSelectionRect(selectedElement);
+                }
+            });
+        }
+
+        // --- X10 ボタン ---
+        document.getElementById("moveX10Btn").addEventListener("click", () => {
+            x10Mode = !x10Mode;
+            document.getElementById("moveX10Btn").style.backgroundColor = x10Mode ? "#4e4" : "";
+        });
+
+        // --- キーボード対応 ---
+        window.addEventListener("keydown", (e) => {
+            if (e.key === "Shift") shiftMode = true;
+            if (!selectedElement) return;
+            let dx = 0, dy = 0;
+            if (e.key === "ArrowLeft") dx = -1;
+            if (e.key === "ArrowRight") dx = 1;
+            if (e.key === "ArrowUp") dy = -1;
+            if (e.key === "ArrowDown") dy = 1;
+            if (dx || dy) {
+                if (!moveInterval) startMove(dx, dy);
+                e.preventDefault();
+            }
+        });
+        window.addEventListener("keyup", (e) => {
+            if (e.key === "Shift") shiftMode = false;
+            stopMove();
+        });
+
+        let mode = shapeSelect.value;
+        function setupColorBox(colorInputId, boxId) {
+            const input = document.getElementById(colorInputId), box = document.getElementById(boxId);
+            box.style.backgroundColor = input.value;
+            box.addEventListener("click", () => input.click());
+            input.addEventListener("input", () => box.style.backgroundColor = input.value);
+        }
+        setupColorBox("strokeColor", "strokeColorBox");
+        setupColorBox("fillColor", "fillColorBox");
+        setupColorBox("textColor", "textColorBox");
+        setupColorBox("textBgColor", "textBgColorBox");
+
+        function clientToSvgPoint(x, y) {
+            const pt = svgCanvas.createSVGPoint(); pt.x = x; pt.y = y;
+            const ctm = svgCanvas.getScreenCTM();
+            return ctm ? pt.matrixTransform(ctm.inverse()) : { x, y };
+        }
+
+        function setCanvasSize(w, h) {
+            const W = Math.max(50, Math.round(parseFloat(w) || 50));
+            const H = Math.max(50, Math.round(parseFloat(h) || 50));
+            svgCanvas.setAttribute('width', W);
+            svgCanvas.setAttribute('height', H);
+            canvasWidthInput.value = W; canvasHeightInput.value = H;
+            updateHandlePosition();
+        }
+        function updateHandlePosition() {
+            const rect = svgCanvas.getBoundingClientRect();
+            handle.style.left = (window.scrollX + rect.right - handle.offsetWidth) + 'px';
+            handle.style.top = (window.scrollY + rect.bottom - handle.offsetHeight) + 'px';
+        }
+        canvasWidthInput.addEventListener('change', () => setCanvasSize(canvasWidthInput.value, canvasHeightInput.value));
+        canvasHeightInput.addEventListener('change', () => setCanvasSize(canvasWidthInput.value, canvasHeightInput.value));
+        setCanvasSize(canvasWidthInput.value, canvasHeightInput.value);
+
+        let isResizing = false;
+        handle.addEventListener('mousedown', e => { e.preventDefault(); isResizing = true; document.body.style.userSelect = 'none'; });
+        window.addEventListener('mouseup', () => { isResizing = false; document.body.style.userSelect = ''; });
+        window.addEventListener('mousemove', e => { if (!isResizing) return; const rect = svgCanvas.getBoundingClientRect(); setCanvasSize(e.clientX - rect.left, e.clientY - rect.top); });
+        window.addEventListener('scroll', updateHandlePosition, { passive: true });
+        window.addEventListener('resize', updateHandlePosition);
+        window.addEventListener('load', updateHandlePosition);
+        new MutationObserver(updateHandlePosition).observe(svgCanvas, { attributes: true, attributeFilter: ['width', 'height'] });
+
+        // --------------------------
+        // モード切替
+        // --------------------------
+        shapeSelect.addEventListener("change", e => { mode = e.target.value; clearSelection(); });
+
+        // --------------------------
+        // マウス座標表示
+        // --------------------------
+        function formatCoord(n) { return String(n).padStart(5, "_"); }
+        svgCanvas.addEventListener("mousemove", e => {
+            const rect = svgCanvas.getBoundingClientRect();
+            const x = Math.floor(e.clientX - rect.left), y = Math.floor(e.clientY - rect.top);
+            coordsLabel.textContent = `${formatCoord(x)},${formatCoord(y)}`;
+        });
+        svgCanvas.addEventListener("mouseleave", () => { coordsLabel.textContent = "____0,____0"; });
+
+        // --------------------------
+        // 選択・移動
+        // --------------------------
+        function clearSelection() {
+            if (selectionRect && selectionRect.parentNode) selectionRect.parentNode.removeChild(selectionRect);
+            selectionRect = null; selectedElement = null;
+        }
+        function selectElement(el) {
+            if (!el || el === svgCanvas) { clearSelection(); return; }
+            clearSelection();
+            selectedElement = el;
+            const bbox = el.getBBox(), pad = 6;
+            selectionRect = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+            selectionRect.setAttribute("x", bbox.x - pad); selectionRect.setAttribute("y", bbox.y - pad);
+            selectionRect.setAttribute("width", bbox.width + pad * 2); selectionRect.setAttribute("height", bbox.height + pad * 2);
+            selectionRect.setAttribute("fill", "none"); selectionRect.setAttribute("stroke", "blue");
+            selectionRect.setAttribute("stroke-dasharray", "4,3"); selectionRect.setAttribute("pointer-events", "none");
+            const transform = el.getAttribute("transform"); if (transform) selectionRect.setAttribute("transform", transform);
+            svgCanvas.appendChild(selectionRect);
+        }
+        function updateSelectionRect(el) {
+            if (!selectionRect || !el) return;
+            const bbox = el.getBBox(), pad = 6;
+            selectionRect.setAttribute("x", bbox.x - pad);
+            selectionRect.setAttribute("y", bbox.y - pad);
+            selectionRect.setAttribute("width", bbox.width + pad * 2);
+            selectionRect.setAttribute("height", bbox.height + pad * 2);
+            const transform = el.getAttribute("transform"); if (transform) selectionRect.setAttribute("transform", transform);
+        }
+        // --------------------------
+        // Undo 元に戻す
+        // --------------------------
+
+        // ---- Undo スタック ----
+        //let undoStack = [];
+
+        function pushUndo() {
+            const current = svgCanvas.innerHTML;
+            // 直前と同じなら積まない
+            if (undoStack.length === 0 || undoStack[undoStack.length - 1] !== current) {
+                undoStack.push(current);
+                if (undoStack.length > 50) undoStack.shift(); // 上限
+            }
+        }
+
+        function undo() {
+            if (undoStack.length > 0) {
+                const last = undoStack.pop();// 直前の状態を取得
+                svgCanvas.innerHTML = last; // そのまま復元
+                clearSelection();
+            }
+        }
+        document.getElementById("undoBtn").addEventListener("click", undo);
+
+        // ---- 操作確定時に Undo を積む ----
+        function finalizeAction() {
+            if (selectedElement || currentPath) {
+                pushUndo();
+            }
+            currentPath = null;
+            points = [];
+            draggingSelection = false;
+        }
+
+        // マウスを離したときに確定
+        window.addEventListener("mouseup", finalizeAction);
+
+        // 「パスを閉じる」「終了ボタン」などでも確定
+        document.getElementById("closePathBtn").addEventListener("click", finalizeAction);
+        document.getElementById("endPathBtn").addEventListener("click", finalizeAction);
+
+        // ---- 削除 ----
+        document.getElementById("deleteBtn").addEventListener("click", () => {
+            if (selectedElement) {
+                pushUndo(); // ← 削除前にUndoに積む
+                selectedElement.remove();
+                clearSelection();
+            }
+        });
+
+        // キーボード Delete キーでも削除できるようにする
+        window.addEventListener("keydown", e => {
+            if (e.key === "Delete" && selectedElement) {
+                pushUndo(); // ← これも削除前にUndo
+                selectedElement.remove();
+                clearSelection();
+            }
+        });
+
+        // --------------------------
+        // ファイル操作
+        // --------------------------
+        // 保存
+        function saveSVG() {
+            let source = svgCanvas.outerHTML;
+            if (!source.includes('xmlns="http://www.w3.org/2000/svg"')) {
+                source = source.replace(/^<svg/, '<svg xmlns="http://www.w3.org/2000/svg"');
+            }
+            const blob = new Blob([source], { type: "image/svg+xml;charset=utf-8" });
+            const link = document.createElement("a");
+            link.href = URL.createObjectURL(blob);
+            link.download = "canvas.svg";
+            link.click();
+        }
+
+        // 読み込み
+        // --- 変数定義に追加 ---
+        const fileInput = document.getElementById("fileInput");
+        const fileSelect = document.getElementById("fileSelect");
+
+        // --- ファイルメニューの処理 ---
+        fileSelect.addEventListener("change", e => {
+            if (e.target.value === "new") {
+                svgCanvas.replaceChildren(); // 新規
+                setCanvasSize(1500, 750);
+                undoStack = [];
+                clearSelection();
+            }
+            if (e.target.value === "load") {
+                fileInput.click(); // ファイル選択ダイアログを開く
+            }
+            if (e.target.value === "save" || e.target.value === "saveas") {
+                saveSVG(); // 既存の保存処理
+            }
+            e.target.value = "ファイル"; // 選択状態を戻す
+        });
+        // --- ファイル読込処理 ---
+        fileInput.addEventListener("change", e => {
+            const file = e.target.files[0];
+            if (!file) return;
+
+            const reader = new FileReader();
+            reader.onload = ev => {
+                const parser = new DOMParser();
+                const doc = parser.parseFromString(ev.target.result, "image/svg+xml");
+                const loadedSvg = doc.querySelector("svg");
+                if (!loadedSvg) {
+                    alert("SVGファイルではありません");
+                    return;
+                }
+
+                // 既存のキャンバスを置き換える（属性もコピー）
+                while (svgCanvas.firstChild) svgCanvas.removeChild(svgCanvas.firstChild);
+                for (const attr of loadedSvg.attributes) {
+                    svgCanvas.setAttribute(attr.name, attr.value);
+                }
+                for (const child of loadedSvg.children) {
+                    svgCanvas.appendChild(child.cloneNode(true));
+                }
+
+                // キャンバスサイズも更新
+                const w = loadedSvg.getAttribute("width") || canvasWidthInput.value;
+                const h = loadedSvg.getAttribute("height") || canvasHeightInput.value;
+                setCanvasSize(w, h);
+
+                // Undoと選択をクリア
+                undoStack = [];
+                clearSelection();
+
+                // 同じファイルを再び選んでも change が発火するようにリセット
+                fileInput.value = "";
+            };
+            reader.readAsText(file);
+        });
+
+        // --------------------------
+        // マウス操作（選択・描画）
+        // --------------------------
+        let currentPath = null, points = [];
+        svgCanvas.addEventListener("mousedown", e => {
+            const pt = clientToSvgPoint(e.clientX, e.clientY);
+            if (mode === "editBtn") {
+                const el = e.target;
+                if (el && el !== svgCanvas) {
+                    selectElement(el);
+                    dragStartPoint = pt;
+                    draggingSelection = true;
+                } else {
+                    clearSelection();
+                }
+            }
+            else {
+                if (mode === "polyline" || mode === "curveline" || mode === "line") {
+                    pushUndo();
+                    if (!currentPath) { currentPath = document.createElementNS("http://www.w3.org/2000/svg", mode === "line" ? "line" : "polyline"); svgCanvas.appendChild(currentPath); points = [pt]; }
+                    if (mode === "line") { currentPath.setAttribute("x1", points[0].x); currentPath.setAttribute("y1", points[0].y); currentPath.setAttribute("x2", pt.x); currentPath.setAttribute("y2", pt.y); }
+                    else { currentPath.setAttribute("points", points.map(p => `${p.x},${p.y}`).join(" ")); points.push(pt); }
+                }
+                else if (mode === "rect" || mode === "circle" || mode === "ellipse") {
+                    pushUndo(); const el = document.createElementNS("http://www.w3.org/2000/svg", mode); svgCanvas.appendChild(el);
+                    //始点終点？
+                    el.setAttribute("x", pt.x); el.setAttribute("y", pt.y); el.setAttribute("width", 0); el.setAttribute("height", 0);
+                    selectedElement = el; updateSelectionRect(el);
+                }
+            }
+        });
+        svgCanvas.addEventListener("mousemove", e => {
+            const pt = clientToSvgPoint(e.clientX, e.clientY);
+            if (draggingSelection && selectedElement) {
+                const dx = pt.x - dragStartPoint.x; const dy = pt.y - dragStartPoint.y;
+                addTranslate(selectedElement, dx, dy); updateSelectionRect(selectedElement); dragStartPoint = pt;
+            }
+        });
+        window.addEventListener("mouseup", () => { draggingSelection = false; currentPath = null; points = []; });
+
+        // --- キーボード ---
+        window.addEventListener("keydown", (e) => {
+            if (e.key === "Shift") shiftMode = true;
+
+            if (!selectedElement) return;
+            let dx = 0, dy = 0;
+            if (e.key === "ArrowLeft") dx = -1;
+            if (e.key === "ArrowRight") dx = 1;
+            if (e.key === "ArrowUp") dy = -1;
+            if (e.key === "ArrowDown") dy = 1;
+
+            if (dx || dy) {
+                if (!moveInterval) {
+                    startMove(dx, dy);
+                }
+                e.preventDefault(); // ページスクロール防止
+            }
+        });
+        window.addEventListener("keyup", (e) => {
+            if (e.key === "Shift") shiftMode = false;
+            stopMove();
+        });
+        // 選択時に pointer-events を確実に拾えるようにする
+        function makeDraggable(el) {
+            el.setAttribute("pointer-events", "bounding-box");
+        }
+
+        // 例えば図形作成直後に必ず呼ぶ
+        function createShape(tagName, attrs = {}) {
+            const el = document.createElementNS("http://www.w3.org/2000/svg", tagName);
+            for (const [k, v] of Object.entries(attrs)) {
+                el.setAttribute(k, v);
+            }
+            makeDraggable(el);
+            svgCanvas.appendChild(el);
+            return el;
+        }
+        //**********************************************************************
+        //              SVG  描画機能
+        //**********************************************************************
+
+        //**********************************************************************
+        //              1 点打ち機能
+        //**********************************************************************
+        svgCanvas.addEventListener("click", (e) => {
+            const mode = shapeSelect.value;
+            if (mode !== "point") return; // モードが「点」でないなら無視
+
+            const rect = svgCanvas.getBoundingClientRect();
+            const x = e.clientX - rect.left;
+            const y = e.clientY - rect.top;
+
+            const circle = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+            circle.setAttribute("cx", x);
+            circle.setAttribute("cy", y);
+            //circle.setAttribute("r", 5);                // 半径5px
+            //circle.setAttribute("r", strokeWidthValue);                //点の大きさ 失敗
+            circle.setAttribute("r", parseFloat(document.getElementById("strokeWidth").value));  // 線の幅
+            // circle.setAttribute("fill", "red");         // 点の色赤
+            //circle.setAttribute("fill", strokeColorInput.value);         //点の色 失敗
+            circle.setAttribute("fill", document.getElementById("strokeColor").value);         // 線の色
+            circle.setAttribute("stroke", "#333");     // 枠線
+            circle.setAttribute("stroke-width", 1);
+
+            svgCanvas.appendChild(circle);
+        });
+
+        //**********************************************************************
+        //              2 線描画機能
+        //**********************************************************************
+        // 必須変数取得
+        //            const shapeSelect = document.getElementById("shapeSelect");
+        //            const strokeColorInput = document.getElementById("strokeColor");
+        //            const strokeWidthInput = document.getElementById("strokeWidth");
+
+        // 線作成関数
+        function createLine(x1, y1, x2, y2) {
+            const line = document.createElementNS("http://www.w3.org/2000/svg", "line");
+            line.setAttribute("x1", x1);
+            line.setAttribute("y1", y1);
+            line.setAttribute("x2", x2);
+            line.setAttribute("y2", y2);
+            line.setAttribute("stroke", strokeColorInput.value);
+            line.setAttribute("stroke-width", strokeWidthInput.value);
+            return line;
+        }
+
+        // SVGクリックで線描画
+        svgCanvas.addEventListener("click", (e) => {
+            if (shapeSelect.value !== "line") return;
+
+            const rect = svgCanvas.getBoundingClientRect();
+            const x = e.clientX - rect.left;
+            const y = e.clientY - rect.top;
+
+            if (!startPoint) {
+                startPoint = { x, y };
+                currentShape = createLine(x, y, x, y);
+                svgCanvas.appendChild(currentShape);
+            } else {
+                currentShape.setAttribute("x2", x);
+                currentShape.setAttribute("y2", y);
+                startPoint = null;
+                currentShape = null;
+            }
+        });
+
+        // マウス移動でプレビュー
+        svgCanvas.addEventListener("mousemove", (e) => {
+            if (!startPoint || !currentShape || shapeSelect.value !== "line") return;
+            const rect = svgCanvas.getBoundingClientRect();
+            const x = e.clientX - rect.left;
+            const y = e.clientY - rect.top;
+            currentShape.setAttribute("x2", x);
+            currentShape.setAttribute("y2", y);
+        });
+
+        //**********************************************************************
+        //              3 連続線
+        //**********************************************************************
+        let currentPolyline = null;
+        let polyPoints = [];
+        let previewLine = null;
+
+        // 頂点追加（クリック）
+        svgCanvas.addEventListener("click", (e) => {
+            if (shapeSelect.value !== "polyline") return;
+
+            const rect = svgCanvas.getBoundingClientRect();
+            const x = Math.floor(e.clientX - rect.left);
+            const y = Math.floor(e.clientY - rect.top);
+
+            if (!currentPolyline) {
+                // polyline 開始
+                currentPolyline = document.createElementNS("http://www.w3.org/2000/svg", "polyline");
+                currentPolyline.setAttribute("fill", "none");
+                currentPolyline.setAttribute("stroke", document.getElementById("strokeColor").value);
+                currentPolyline.setAttribute("stroke-width", document.getElementById("strokeWidth").value);
+                svgCanvas.appendChild(currentPolyline);
+
+                // プレビュー線
+                previewLine = document.createElementNS("http://www.w3.org/2000/svg", "line");
+                previewLine.setAttribute("stroke", document.getElementById("strokeColor").value);
+                previewLine.setAttribute("stroke-width", document.getElementById("strokeWidth").value);
+                previewLine.setAttribute("stroke-dasharray", "4,2"); // 点線プレビュー
+                svgCanvas.appendChild(previewLine);
+
+                polyPoints = [];
+            }
+
+            polyPoints.push(`${x},${y}`);
+            currentPolyline.setAttribute("points", polyPoints.join(" "));
+
+            // プレビュー始点を更新
+            previewLine.setAttribute("x1", x);
+            previewLine.setAttribute("y1", y);
+        });
+
+        // マウス移動でプレビュー更新
+        svgCanvas.addEventListener("mousemove", (e) => {
+            if (shapeSelect.value !== "polyline" || !previewLine || polyPoints.length === 0) return;
+
+            const rect = svgCanvas.getBoundingClientRect();
+            const x = Math.floor(e.clientX - rect.left);
+            const y = Math.floor(e.clientY - rect.top);
+
+            previewLine.setAttribute("x2", x);
+            previewLine.setAttribute("y2", y);
+        });
+
+        // ダブルクリックで終了（開いた折れ線）
+        svgCanvas.addEventListener("dblclick", (e) => {
+            if (shapeSelect.value !== "polyline" || !currentPolyline) return;
+
+            if (previewLine) {
+                previewLine.remove();
+                previewLine = null;
+            }
+
+            currentPolyline = null;
+            polyPoints = [];
+        });
+
+        // Zキーで始点に戻って閉じる
+        document.addEventListener("keydown", (e) => {
+            // 日本語入力中は反応させない
+            if (e.isComposing || e.target.tagName === "INPUT" || e.target.tagName === "SELECT") return;
+
+            if (shapeSelect.value === "polyline" && currentPolyline && (e.key === "z" || e.key === "Z")) {
+                if (polyPoints.length > 2) {
+                    // 始点に戻す
+                    polyPoints.push(polyPoints[0]);
+                    currentPolyline.setAttribute("points", polyPoints.join(" "));
+
+                    if (previewLine) {
+                        previewLine.remove();
+                        previewLine = null;
+                    }
+
+                    currentPolyline = null;
+                    polyPoints = [];
+                }
+            }
+        });
+        // -----------------------------
+        // 共通関数：始点に戻って閉じる
+        // -----------------------------
+        function closePolyline() {
+            if (!currentPolyline || polyPoints.length < 3) return;
+
+            // 始点を追加して閉じる
+            polyPoints.push(polyPoints[0]);
+            currentPolyline.setAttribute("points", polyPoints.join(" "));
+
+            // プレビュー線があれば削除
+            if (previewLine) {
+                previewLine.remove();
+                previewLine = null;
+            }
+
+            currentPolyline = null;
+            polyPoints = [];
+        }
+
+        // -----------------------------
+        // Zキーで閉じる
+        // -----------------------------
+        document.addEventListener("keydown", (e) => {
+            if (e.isComposing || e.target.tagName === "INPUT" || e.target.tagName === "SELECT") return;
+            if ((e.key === "z" || e.key === "Z") && shapeSelect.value === "polyline") {
+                closePolyline();
+            }
+        });
+
+        // -----------------------------
+        // メニューバー「Z」ボタン
+        // -----------------------------
+        document.getElementById("closePathBtn").addEventListener("click", () => {
+            closePolyline();
+        });
+        //**********************************************************************
+        //              4 滑らかな連続曲線
+        //**********************************************************************
+        // ---------- 連続曲線描画（閉じ曲線対応） ----------
+        let curvelinePoints = [];
+        let curvelinePreview = null;
+        let isCurvelineDrawing = false;
+
+        function updateCurvelinePreview() {
+            if (!curvelinePreview) return;
+            curvelinePreview.setAttribute("d", catmullRomToBezier(curvelinePoints));
+        }
+
+        // 左クリック・右クリック
+        svgCanvas.addEventListener('mousedown', (e) => {
+            const shape = document.getElementById('shapeSelect').value;
+            if (shape !== 'curveline') return;
+            const rect = svgCanvas.getBoundingClientRect();
+            const x = e.clientX - rect.left;
+            const y = e.clientY - rect.top;
+
+            if (e.button === 0) { // 左クリック
+                e.preventDefault();
+                if (!isCurvelineDrawing) {
+                    isCurvelineDrawing = true;
+                    curvelinePoints = [{ x, y }];
+                    curvelinePreview = document.createElementNS("http://www.w3.org/2000/svg", "path");
+                    curvelinePreview.setAttribute("fill", "none");
+                    curvelinePreview.setAttribute("stroke", document.getElementById('strokeColor').value);
+                    curvelinePreview.setAttribute("stroke-width", document.getElementById('strokeWidth').value);
+                    curvelinePreview.setAttribute("stroke-dasharray", document.getElementById('strokeStyle').value);
+                    svgCanvas.appendChild(curvelinePreview);
+                } else {
+                    curvelinePoints.push({ x, y });
+                }
+                updateCurvelinePreview();
+            }
+
+            if (e.button === 2) { // 右クリックで直前の点削除
+                e.preventDefault();
+                if (isCurvelineDrawing && curvelinePoints.length > 0) {
+                    curvelinePoints.pop();
+                    updateCurvelinePreview();
+                }
+            }
+        });
+
+        // ダブルクリックで終了
+        svgCanvas.addEventListener('dblclick', (e) => {
+            const shape = document.getElementById('shapeSelect').value;
+            if (shape !== 'curveline' || !isCurvelineDrawing) return;
+            e.preventDefault();
+            finalizeCurveline(false);
+        });
+
+        // Z / z キーで始点に戻って閉じる
+        window.addEventListener('keydown', (e) => {
+            if (!isCurvelineDrawing) return;
+            if (e.key === 'z' || e.key === 'Z') {
+                finalizeCurveline(true);
+            }
+        });
+
+        // メニューバーの Z ボタン
+        document.getElementById('closePathBtn').addEventListener('click', () => {
+            if (!isCurvelineDrawing) return;
+            finalizeCurveline(true);
+        });
+
+        // マウス移動でプレビュー更新
+        svgCanvas.addEventListener('mousemove', (e) => {
+            if (!isCurvelineDrawing || !curvelinePreview) return;
+            const rect = svgCanvas.getBoundingClientRect();
+            const x = e.clientX - rect.left;
+            const y = e.clientY - rect.top;
+            const tempPoints = [...curvelinePoints, { x, y }];
+            curvelinePreview.setAttribute("d", catmullRomToBezier(tempPoints));
+        });
+
+        // ---------- カーブ確定 ----------
+        function finalizeCurveline(closePath) {
+            if (curvelinePoints.length < 2) return;
+            let pointsToDraw = [...curvelinePoints];
+            if (closePath) pointsToDraw.push(curvelinePoints[0]); // 始点に戻る
+            const finalPath = document.createElementNS("http://www.w3.org/2000/svg", "path");
+            finalPath.setAttribute("fill", "none");
+            finalPath.setAttribute("stroke", document.getElementById('strokeColor').value);
+            finalPath.setAttribute("stroke-width", document.getElementById('strokeWidth').value);
+            finalPath.setAttribute("stroke-dasharray", document.getElementById('strokeStyle').value);
+            finalPath.setAttribute("d", catmullRomToBezier(pointsToDraw));
+            svgCanvas.appendChild(finalPath);
+
+            // プレビュー削除
+            if (curvelinePreview) svgCanvas.removeChild(curvelinePreview);
+            curvelinePreview = null;
+            curvelinePoints = [];
+            isCurvelineDrawing = false;
+        }
+
+        // ---------- Catmull-Rom スプラインを SVG ベジェに変換 ----------
+        function catmullRomToBezier(points) {
+            if (points.length < 2) return "";
+            let d = `M ${points[0].x},${points[0].y}`;
+            for (let i = 0; i < points.length - 1; i++) {
+                const p0 = points[i - 1] || points[i];
+                const p1 = points[i];
+                const p2 = points[i + 1];
+                const p3 = points[i + 2] || p2;
+                const cp1x = p1.x + (p2.x - p0.x) / 6;
+                const cp1y = p1.y + (p2.y - p0.y) / 6;
+                const cp2x = p2.x - (p3.x - p1.x) / 6;
+                const cp2y = p2.y - (p3.y - p1.y) / 6;
+                d += ` C ${cp1x},${cp1y} ${cp2x},${cp2y} ${p2.x},${p2.y}`;
+            }
+            return d;
+        }
+        //**********************************************************************
+        //              5「矩形作図」機能
+        //**********************************************************************
+        // マウス移動でプレビュー更新
+        svgCanvas.addEventListener("mousemove", e => {
+            if (!isDrawing || shapeSelect.value !== "rect") return;
+
+            const rect = svgCanvas.getBoundingClientRect();
+            const x = e.clientX - rect.left;
+            const y = e.clientY - rect.top;
+
+            const w = Math.abs(x - startX);
+            const h = Math.abs(y - startY);
+
+            // --- 最小サイズ未満ならまだ描かない ---
+            if (w < 5 || h < 5) {
+                if (previewRect) {
+                    previewRect.setAttribute("width", 0);
+                    previewRect.setAttribute("height", 0);
+                }
+                return;
+            }
+
+            // プレビュー矩形が未生成なら作る
+            if (!previewRect) {
+                previewRect = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+                previewRect.setAttribute("fill", "rgba(0,128,255,0.3)");
+                previewRect.setAttribute("stroke", "blue");
+                previewRect.setAttribute("stroke-width", 2);
+                svgCanvas.appendChild(previewRect);
+            }
+
+            // サイズ反映
+            previewRect.setAttribute("x", Math.min(x, startX));
+            previewRect.setAttribute("y", Math.min(y, startY));
+            previewRect.setAttribute("width", w);
+            previewRect.setAttribute("height", h);
+        });
+        //**********************************************************************
+        //              5「矩形作図」機能
+        //**********************************************************************
+
+        // ============================================================
+        // 矩形作図（クリック始点 → moveプレビュー → クリック2回目で確定）
+        // ============================================================
+        let startPoint = null;
+        //let previewRect = null;
+
+        svgCanvas.addEventListener("click", e => {
+            if (shapeSelect.value !== "rect") return;
+
+            const rect = svgCanvas.getBoundingClientRect();
+            const x = e.clientX - rect.left;
+            const y = e.clientY - rect.top;
+
+            if (!startPoint) {
+                // 1回目クリック: 始点を記録 & プレビュー矩形を作成
+                startPoint = { x, y };
+                previewRect = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+                previewRect.setAttribute("x", x);
+                previewRect.setAttribute("y", y);
+                previewRect.setAttribute("width", 0);
+                previewRect.setAttribute("height", 0);
+                previewRect.setAttribute("fill", "rgba(0,128,255,0.3)");
+                previewRect.setAttribute("stroke", strokeColorInput.value);
+                previewRect.setAttribute("stroke-width", strokeWidthInput.value);
+                svgCanvas.appendChild(previewRect);
+            } else {
+                // 2回目クリック: 確定
+                const x0 = Math.min(startPoint.x, x);
+                const y0 = Math.min(startPoint.y, y);
+                const w = Math.abs(x - startPoint.x);
+                const h = Math.abs(y - startPoint.y);
+
+                if (w > 2 && h > 2) {
+                    previewRect.setAttribute("x", x0);
+                    previewRect.setAttribute("y", y0);
+                    previewRect.setAttribute("width", w);
+                    previewRect.setAttribute("height", h);
+
+                    // ここを追加: 編集できるようにする
+                    //previewRect.style.pointerEvents = "all";
+                    //selectElement(previewRect);
+
+                } else {
+                    // 小さすぎる場合は削除
+                    svgCanvas.removeChild(previewRect);
+                }
+
+                // リセット
+                startPoint = null;
+                previewRect = null;
+            }
+        });
+
+        svgCanvas.addEventListener("mousemove", e => {
+            if (!startPoint || !previewRect || shapeSelect.value !== "rect") return;
+
+            const rect = svgCanvas.getBoundingClientRect();
+            const x = e.clientX - rect.left;
+            const y = e.clientY - rect.top;
+
+            const x0 = Math.min(startPoint.x, x);
+            const y0 = Math.min(startPoint.y, y);
+            const w = Math.abs(x - startPoint.x);
+            const h = Math.abs(y - startPoint.y);
+
+            previewRect.setAttribute("x", x0);
+            previewRect.setAttribute("y", y0);
+            previewRect.setAttribute("width", w);
+            previewRect.setAttribute("height", h);
+        });
+        //**********************************************************************
+        //              6 円描画機能
+        //**********************************************************************
+        //const strokeColorInput = document.getElementById('strokeColor');
+        //const strokeWidthInput = document.getElementById('strokeWidth');
+        //const fillColorInput = document.getElementById('fillColor');
+        svgCanvas.addEventListener("click", (e) => {
+            if (shapeSelect.value !== "circle") return;
+
+            const rect = svgCanvas.getBoundingClientRect();
+            const x = e.clientX - rect.left;
+            const y = e.clientY - rect.top;
+
+            if (!startPoint) {
+                // 1回目クリック: 中心点を決定
+                startPoint = { x, y };
+                currentShape = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+                currentShape.setAttribute("cx", x);
+                currentShape.setAttribute("cy", y);
+                currentShape.setAttribute("r", 0);
+                currentShape.setAttribute("stroke", strokeColorInput.value);
+                currentShape.setAttribute("stroke-width", strokeWidthInput.value);
+                currentShape.setAttribute("fill", fillColorInput.value);
+                svgCanvas.appendChild(currentShape);
+            } else {
+                // 2回目クリック: 半径を決定
+                const dx = x - startPoint.x;
+                const dy = y - startPoint.y;
+                const r = Math.sqrt(dx * dx + dy * dy);
+                currentShape.setAttribute("r", r);
+                startPoint = null;
+                currentShape = null;
+            }
+        });
+
+        // マウス移動で円プレビュー
+        svgCanvas.addEventListener("mousemove", (e) => {
+            if (!startPoint || !currentShape || shapeSelect.value !== "circle") return;
+
+            currentShape.setAttribute("stroke", strokeColorInput.value);
+            currentShape.setAttribute("stroke-width", strokeWidthInput.value);
+            currentShape.setAttribute("fill", fillColorInput.value);
+
+            const rect = svgCanvas.getBoundingClientRect();
+            const x = e.clientX - rect.left;
+            const y = e.clientY - rect.top;
+
+            const dx = x - startPoint.x;
+            const dy = y - startPoint.y;
+            const r = Math.sqrt(dx * dx + dy * dy);
+            currentShape.setAttribute("r", r);
+        });
+        //**********************************************************************
+        //              7 円弧描画
+        //**********************************************************************
+        let arcPoints = [];       // 始点・終点を保持
+        let previewArc = null;    // プレビュー用path
+        //        let previewLine = null;   // 始点～終点のガイド線
+        let guideLine = null;     // 垂直二等分線ガイド
+
+        // 円弧パスを作る関数
+        function makeArcPath(p1, p2, pc) {
+            const dx1 = p1.x - pc.x;
+            const dy1 = p1.y - pc.y;
+            const r = Math.sqrt(dx1 * dx1 + dy1 * dy1);
+
+            // 始点と終点の角度
+            const ang1 = Math.atan2(p1.y - pc.y, p1.x - pc.x);
+            const ang2 = Math.atan2(p2.y - pc.y, p2.x - pc.x);
+
+            // 角度差から大弧フラグを判定
+            let delta = ang2 - ang1;
+            if (delta < 0) delta += Math.PI * 2;
+            const largeArcFlag = delta > Math.PI ? 1 : 0;
+            const sweepFlag = 1; // 反時計回り
+
+            return `M ${p1.x},${p1.y} A ${r},${r} 0 ${largeArcFlag},${sweepFlag} ${p2.x},${p2.y}`;
+        }
+
+        svgCanvas.addEventListener("click", (e) => {
+            const mode = document.getElementById("shapeSelect").value;
+            if (mode !== "arc") return;
+
+            const rect = svgCanvas.getBoundingClientRect();
+            const x = e.clientX - rect.left;
+            const y = e.clientY - rect.top;
+
+            if (arcPoints.length === 0) {
+                // 始点
+                arcPoints.push({ x, y });
+            } else if (arcPoints.length === 1) {
+                // 終点
+                arcPoints.push({ x, y });
+                const [p1, p2] = arcPoints;
+
+                // ガイド線（始点～終点）
+                previewLine = document.createElementNS("http://www.w3.org/2000/svg", "line");
+                previewLine.setAttribute("x1", p1.x);
+                previewLine.setAttribute("y1", p1.y);
+                previewLine.setAttribute("x2", p2.x);
+                previewLine.setAttribute("y2", p2.y);
+                previewLine.setAttribute("stroke", "#888");
+                previewLine.setAttribute("stroke-dasharray", "4,4");
+                svgCanvas.appendChild(previewLine);
+
+                // 垂直二等分線ガイド
+                guideLine = document.createElementNS("http://www.w3.org/2000/svg", "line");
+                guideLine.setAttribute("stroke", "#0af");
+                guideLine.setAttribute("stroke-dasharray", "6,6");
+                svgCanvas.appendChild(guideLine);
+
+                // プレビュー円弧
+                previewArc = document.createElementNS("http://www.w3.org/2000/svg", "path");
+                previewArc.setAttribute("fill", "none");
+                previewArc.setAttribute("stroke", document.getElementById("strokeColor").value);
+                previewArc.setAttribute("stroke-width", document.getElementById("strokeWidth").value);
+                previewArc.setAttribute("stroke-dasharray", "4,4");
+                svgCanvas.appendChild(previewArc);
+            } else if (arcPoints.length === 2) {
+                // 中心点（確定）
+                const [p1, p2] = arcPoints;
+                const pc = { x, y };
+
+                const d = makeArcPath(p1, p2, pc);
+                const finalArc = document.createElementNS("http://www.w3.org/2000/svg", "path");
+                finalArc.setAttribute("d", d);
+                finalArc.setAttribute("fill", "none");
+                finalArc.setAttribute("stroke", document.getElementById("strokeColor").value);
+                finalArc.setAttribute("stroke-width", document.getElementById("strokeWidth").value);
+                svgCanvas.appendChild(finalArc);
+
+                // プレビュー削除
+                if (previewArc) { svgCanvas.removeChild(previewArc); previewArc = null; }
+                if (previewLine) { svgCanvas.removeChild(previewLine); previewLine = null; }
+                if (guideLine) { svgCanvas.removeChild(guideLine); guideLine = null; }
+                arcPoints = [];
+            }
+        });
+
+        // マウス移動でプレビュー更新
+        svgCanvas.addEventListener("mousemove", (e) => {
+            const mode = document.getElementById("shapeSelect").value;
+            if (mode !== "arc") return;
+            if (arcPoints.length !== 2 || !previewArc) return;
+
+            const rect = svgCanvas.getBoundingClientRect();
+            const x = e.clientX - rect.left;
+            const y = e.clientY - rect.top;
+            const [p1, p2] = arcPoints;
+            const pc = { x, y };
+
+            // プレビュー円弧更新
+            const d = makeArcPath(p1, p2, pc);
+            previewArc.setAttribute("d", d);
+
+            // 垂直二等分線の計算
+            const mx = (p1.x + p2.x) / 2;
+            const my = (p1.y + p2.y) / 2;
+            const dx = p2.x - p1.x;
+            const dy = p2.y - p1.y;
+
+            // 垂直方向ベクトル
+            const len = Math.sqrt(dx * dx + dy * dy);
+            if (len > 0) {
+                const nx = -dy / len;
+                const ny = dx / len;
+
+                const L = 1000; // ガイド線の長さ
+                const x1 = mx - nx * L;
+                const y1 = my - ny * L;
+                const x2 = mx + nx * L;
+                const y2 = my + ny * L;
+
+                guideLine.setAttribute("x1", x1);
+                guideLine.setAttribute("y1", y1);
+                guideLine.setAttribute("x2", x2);
+                guideLine.setAttribute("y2", y2);
+            }
+        });
+        //**********************************************************************
+        //              8 楕円描画
+        //**********************************************************************
+        //              8 楕円描画機能
+        // ---------- 楕円描画 ----------
+        let ellipsePoints = []; // 焦点1, 焦点2, 楕円上の点
+        let previewEllipse = null;
+        let focusMarkers = []; // 焦点表示用の小さな赤点(circle要素)
+
+        svgCanvas.addEventListener("click", e => {
+            if (shapeSelect.value !== "ellipse") return;
+
+            const rect = svgCanvas.getBoundingClientRect();
+            const x = e.clientX - rect.left;
+            const y = e.clientY - rect.top;
+
+            ellipsePoints.push({ x, y });
+
+            if (ellipsePoints.length === 1) {
+                // 焦点1マーカー
+                const f1Marker = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+                f1Marker.setAttribute("cx", x);
+                f1Marker.setAttribute("cy", y);
+                f1Marker.setAttribute("r", 3);
+                f1Marker.setAttribute("fill", "red");
+                svgCanvas.appendChild(f1Marker);
+                focusMarkers.push(f1Marker);
+
+            } else if (ellipsePoints.length === 2) {
+                // 焦点2マーカー
+                const f2Marker = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+                f2Marker.setAttribute("cx", x);
+                f2Marker.setAttribute("cy", y);
+                f2Marker.setAttribute("r", 3);
+                f2Marker.setAttribute("fill", "red");
+                svgCanvas.appendChild(f2Marker);
+                focusMarkers.push(f2Marker);
+
+                // プレビュー楕円作成
+                previewEllipse = document.createElementNS("http://www.w3.org/2000/svg", "ellipse");
+                previewEllipse.setAttribute("stroke", document.getElementById("strokeColor").value);
+                previewEllipse.setAttribute("stroke-width", document.getElementById("strokeWidth").value);
+                previewEllipse.setAttribute("fill", document.getElementById("fillColor").value);
+                previewEllipse.setAttribute("fill-opacity", 0.3); // 半透明プレビュー
+                svgCanvas.appendChild(previewEllipse);
+
+            } else if (ellipsePoints.length === 3) {
+                // 楕円確定
+                updateEllipse(ellipsePoints[0], ellipsePoints[1], ellipsePoints[2], previewEllipse);
+                previewEllipse.setAttribute("fill-opacity", 1.0); // 確定
+
+                // 焦点マーカーを削除
+                focusMarkers.forEach(m => m.remove());
+                focusMarkers = [];
+
+                previewEllipse = null;
+                ellipsePoints = [];
+            }
+        });
+
+        svgCanvas.addEventListener("mousemove", e => {
+            if (shapeSelect.value !== "ellipse") return;
+            if (ellipsePoints.length === 2 && previewEllipse) {
+                const rect = svgCanvas.getBoundingClientRect();
+                const x = e.clientX - rect.left;
+                const y = e.clientY - rect.top;
+                updateEllipse(ellipsePoints[0], ellipsePoints[1], { x, y }, previewEllipse);
+            }
+        });
+
+        // 焦点2点と楕円周上の点から楕円を更新する関数
+        function updateEllipse(f1, f2, p, ellipseElem) {
+            const d1 = Math.hypot(p.x - f1.x, p.y - f1.y);
+            const d2 = Math.hypot(p.x - f2.x, p.y - f2.y);
+            const a = (d1 + d2) / 2;
+
+            const cx = (f1.x + f2.x) / 2;
+            const cy = (f1.y + f2.y) / 2;
+
+            const c = Math.hypot(f2.x - f1.x, f2.y - f1.y) / 2;
+            const b = Math.sqrt(Math.max(a * a - c * c, 0));
+
+            const angle = Math.atan2(f2.y - f1.y, f2.x - f1.x) * 180 / Math.PI;
+
+            ellipseElem.setAttribute("cx", cx);
+            ellipseElem.setAttribute("cy", cy);
+            ellipseElem.setAttribute("rx", a);
+            ellipseElem.setAttribute("ry", b);
+            ellipseElem.setAttribute("transform", `rotate(${angle} ${cx} ${cy})`);
+        }
+        //************************************************************
+        //              9 楕円弧描画モード 追加する変数 =========
+        //**********************************************************************
+        let arcStart = null;
+        let arcEnd = null;
+        let arcCenter = null;
+        let arcPreview = null;
+        //let guideLine = null;
+        let guideCircle = null;
+        let ellipseArcStep = 0; // 0:未開始,1:始点,2:終点,3:中心,4:軸点で確定
+        //                9 楕円弧描画モード
+        svgCanvas.addEventListener("click", (e) => {
+            const mode = document.getElementById("shapeSelect").value;
+            if (mode !== "ellipticalArc") return;
+
+            const rect = svgCanvas.getBoundingClientRect();
+            const x = e.clientX - rect.left;
+            const y = e.clientY - rect.top;
+
+            if (ellipseArcStep === 0) {
+                // 始点
+                arcStart = { x, y };
+                ellipseArcStep = 1;
+            } else if (ellipseArcStep === 1) {
+                // 終点
+                arcEnd = { x, y };
+                // プレビューpath作成
+                arcPreview = document.createElementNS("http://www.w3.org/2000/svg", "path");
+                arcPreview.setAttribute("stroke", "blue");
+                arcPreview.setAttribute("stroke-dasharray", "5,5");
+                arcPreview.setAttribute("fill", "none");
+                svgCanvas.appendChild(arcPreview);
+                ellipseArcStep = 2;
+            } else if (ellipseArcStep === 2) {
+                // 中心点
+                arcCenter = { x, y };
+
+                // ガイド円（中心マーク）
+                guideCircle = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+                guideCircle.setAttribute("cx", x);
+                guideCircle.setAttribute("cy", y);
+                guideCircle.setAttribute("r", 4);
+                guideCircle.setAttribute("stroke", "red");
+                guideCircle.setAttribute("fill", "none");
+                svgCanvas.appendChild(guideCircle);
+
+                ellipseArcStep = 3;
+            } else if (ellipseArcStep === 3) {
+                // 楕円のもう一方の軸点
+                const axisPoint = { x, y };
+
+                // 半径を計算
+                const rx = Math.hypot(axisPoint.x - arcCenter.x, axisPoint.y - arcCenter.y);
+                const ry = Math.hypot(arcStart.x - arcCenter.x, arcStart.y - arcCenter.y);
+
+                // 回転角
+                const angle = Math.atan2(axisPoint.y - arcCenter.y, axisPoint.x - arcCenter.x) * 180 / Math.PI;
+
+                // 楕円弧確定
+                const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+                const largeArcFlag = 0;
+                const sweepFlag = 1;
+                path.setAttribute("d", `M ${arcStart.x},${arcStart.y} A ${rx},${ry} ${angle} ${largeArcFlag} ${sweepFlag} ${arcEnd.x},${arcEnd.y}`);
+                path.setAttribute("stroke", document.getElementById("strokeColor").value);
+                path.setAttribute("stroke-width", document.getElementById("strokeWidth").value);
+                path.setAttribute("fill", "none");
+                svgCanvas.appendChild(path);
+
+                // 後片付け
+                if (arcPreview) svgCanvas.removeChild(arcPreview);
+                if (guideCircle) svgCanvas.removeChild(guideCircle);
+                arcPreview = null;
+                guideCircle = null;
+                arcStart = arcEnd = arcCenter = null;
+                ellipseArcStep = 0;
+            }
+        });
+
+        // ========= マウス移動でプレビュー更新 =========
+        svgCanvas.addEventListener("mousemove", (e) => {
+            const mode = document.getElementById("shapeSelect").value;
+            if (mode !== "ellipticalArc" || !arcPreview) return;
+
+            const rect = svgCanvas.getBoundingClientRect();
+            const x = e.clientX - rect.left;
+            const y = e.clientY - rect.top;
+
+            if (ellipseArcStep === 2 && arcStart && arcEnd) {
+                // 中心プレビュー中
+                arcPreview.setAttribute("d", `M ${arcStart.x},${arcStart.y} L ${x},${y} L ${arcEnd.x},${arcEnd.y}`);
+            }
+            if (ellipseArcStep === 3 && arcStart && arcEnd && arcCenter) {
+                const rx = Math.hypot(x - arcCenter.x, y - arcCenter.y);
+                const ry = Math.hypot(arcStart.x - arcCenter.x, arcStart.y - arcCenter.y);
+                const angle = Math.atan2(y - arcCenter.y, x - arcCenter.x) * 180 / Math.PI;
+                arcPreview.setAttribute("d", `M ${arcStart.x},${arcStart.y} A ${rx},${ry} ${angle} 0 1 ${arcEnd.x},${arcEnd.y}`);
+            }
+        });
+
+        //**********************************************************************
+        //             10 2次ベジェ曲線描画（ダブルクリックで終了）
+        //******************************************************************
+        let qPoints = []; // [始点, 終点]
+        let qPath = null;
+        let qHandleLine = null;
+        let qControlCircle = null;
+        let draggingControl = false;
+        let bezierActive = false;
+
+        svgCanvas.addEventListener("click", (e) => {
+            const mode = document.getElementById("shapeSelect").value;
+            if (mode !== "qbezier") return;
+
+            const rect = svgCanvas.getBoundingClientRect();
+            const x = e.clientX - rect.left;
+            const y = e.clientY - rect.top;
+
+            if (qPoints.length === 0) {
+                // 始点
+                qPoints.push({ x, y });
+
+            } else if (qPoints.length === 1) {
+                // 終点
+                qPoints.push({ x, y });
+
+                // 曲線プレビュー開始
+                qPath = document.createElementNS("http://www.w3.org/2000/svg", "path");
+                qPath.setAttribute("stroke", document.getElementById("strokeColor").value);
+                qPath.setAttribute("stroke-width", document.getElementById("strokeWidth").value);
+                qPath.setAttribute("fill", "none");
+                svgCanvas.appendChild(qPath);
+
+                // ハンドル線
+                qHandleLine = document.createElementNS("http://www.w3.org/2000/svg", "polyline");
+                qHandleLine.setAttribute("stroke", "gray");
+                qHandleLine.setAttribute("stroke-dasharray", "4,2");
+                qHandleLine.setAttribute("fill", "none");
+                svgCanvas.appendChild(qHandleLine);
+
+                // 制御点ハンドル
+                qControlCircle = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+                qControlCircle.setAttribute("r", 5);
+                qControlCircle.setAttribute("fill", "red");
+                qControlCircle.style.cursor = "move";
+                svgCanvas.appendChild(qControlCircle);
+
+                bezierActive = true;
+
+                // ドラッグ操作
+                qControlCircle.addEventListener("mousedown", (ev) => {
+                    ev.preventDefault();
+                    draggingControl = true;
+                });
+                window.addEventListener("mouseup", () => draggingControl = false);
+                window.addEventListener("mousemove", (ev) => {
+                    if (!draggingControl || !bezierActive) return;
+                    const rect2 = svgCanvas.getBoundingClientRect();
+                    const cx = ev.clientX - rect2.left;
+                    const cy = ev.clientY - rect2.top;
+                    updateQuadraticBezier(cx, cy);
+                });
+
+            }
+        });
+
+        // マウス移動でプレビュー更新（終点確定後のみ）
+        svgCanvas.addEventListener("mousemove", (e) => {
+            if (qPoints.length !== 2 || !qPath || draggingControl || !bezierActive) return;
+            const rect = svgCanvas.getBoundingClientRect();
+            const cx = e.clientX - rect.left;
+            const cy = e.clientY - rect.top;
+            updateQuadraticBezier(cx, cy);
+        });
+        /*        svgCanvas.addEventListener("mousemove", (e) => {
+                    if (qPoints.length !== 3 || !qPath || draggingControl || !bezierActive) return;
+                    const rect = svgCanvas.getBoundingClientRect();
+                    const cx = e.clientX - rect.left;
+                    const cy = e.clientY - rect.top;
+                    return;
+                });*/
+
+        // ダブルクリックで終了
+        svgCanvas.addEventListener("dblclick", (e) => {
+            if (!bezierActive) return;
+            bezierActive = false;
+            qPoints = [];
+            qPath = null;
+            qHandleLine.remove();
+            qHandleLine = null;
+            qControlCircle.remove();
+            qControlCircle = null;
+        });
+
+        // 曲線更新関数
+        function updateQuadraticBezier(cx, cy) {
+            const [p1, p2] = qPoints;
+            qPath.setAttribute("d", `M ${p1.x},${p1.y} Q ${cx},${cy} ${p2.x},${p2.y}`);
+            qHandleLine.setAttribute("points", `${p1.x},${p1.y} ${cx},${cy} ${p2.x},${p2.y}`);
+            qControlCircle.setAttribute("cx", cx);
+            qControlCircle.setAttribute("cy", cy);
+        }
+        //**********************************************************************
+        //              11 3次ベジェ曲線（Cbezierモード専用）
+        //**********************************************************************
+        let bezierPoints = [];        // 4点（始点・制御点1・制御点2・終点）
+        let bezierHandles = [];       // 赤丸
+        let bezierPreviewPath = null; // プレビューpath
+
+        function createBezierHandle(x, y, index) {
+            const h = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+            h.setAttribute("cx", x);
+            h.setAttribute("cy", y);
+            h.setAttribute("r", 5);
+            h.setAttribute("fill", "red");
+            h.setAttribute("stroke", "black");
+            h.setAttribute("stroke-width", 1);
+            svgCanvas.appendChild(h);
+
+            let isDragging = false;
+            let offsetX = 0, offsetY = 0;
+
+            h.addEventListener("mousedown", e => {
+                if (mode !== "cbezier") return;   // ← モードチェック
+                e.stopPropagation();
+                const rect = svgCanvas.getBoundingClientRect();
+                const cx = parseFloat(h.getAttribute("cx"));
+                const cy = parseFloat(h.getAttribute("cy"));
+                offsetX = e.clientX - rect.left - cx;
+                offsetY = e.clientY - rect.top - cy;
+                isDragging = true;
+            });
+
+            window.addEventListener("mousemove", e => {
+                if (!isDragging || mode !== "cbezier") return; // ← モードチェック
+                const rect = svgCanvas.getBoundingClientRect();
+                const x = e.clientX - rect.left - offsetX;
+                const y = e.clientY - rect.top - offsetY;
+                h.setAttribute("cx", x);
+                h.setAttribute("cy", y);
+                bezierPoints[index] = { x, y };
+                drawBezierPreview();
+            });
+
+            window.addEventListener("mouseup", () => { isDragging = false; });
+
+            return h;
+        }
+
+        function drawBezierPreview() {
+            if (mode !== "cbezier") return; // ← モードチェック
+            if (bezierPoints.length < 4) return;
+
+            const [p0, p1, p2, p3] = bezierPoints;
+
+            if (!bezierPreviewPath) {
+                bezierPreviewPath = document.createElementNS("http://www.w3.org/2000/svg", "path");
+                bezierPreviewPath.setAttribute("stroke", "red");
+                bezierPreviewPath.setAttribute("stroke-width", 2);
+                bezierPreviewPath.setAttribute("fill", "none");
+                svgCanvas.appendChild(bezierPreviewPath);
+            }
+
+            const d = `M ${p0.x},${p0.y} C ${p1.x},${p1.y}, ${p2.x},${p2.y}, ${p3.x},${p3.y}`;
+            bezierPreviewPath.setAttribute("d", d);
+        }
+
+        // ---------- クリックで点追加 ----------
+        svgCanvas.addEventListener("click", e => {
+            if (mode !== "cbezier") return;  // ← モードチェック
+            if (bezierPoints.length >= 4) return;
+
+            const rect = svgCanvas.getBoundingClientRect();
+            const x = e.clientX - rect.left;
+            const y = e.clientY - rect.top;
+
+            bezierPoints.push({ x, y });
+            bezierHandles.push(createBezierHandle(x, y, bezierPoints.length - 1));
+
+            if (bezierPoints.length === 4) drawBezierPreview();
+        });
+
+        // ---------- ダブルクリックで確定 ----------
+        svgCanvas.addEventListener("dblclick", e => {
+            if (mode !== "cbezier") return;  // ← モードチェック
+            if (!bezierPreviewPath) return;
+
+            const finalPath = document.createElementNS("http://www.w3.org/2000/svg", "path");
+            finalPath.setAttribute("d", bezierPreviewPath.getAttribute("d"));
+            finalPath.setAttribute("stroke", document.getElementById("strokeColor").value);
+            finalPath.setAttribute("stroke-width", document.getElementById("strokeWidth").value);
+            finalPath.setAttribute("fill", "none");
+            svgCanvas.appendChild(finalPath);
+
+            // 赤丸削除
+            bezierHandles.forEach(h => svgCanvas.removeChild(h));
+            bezierHandles = [];
+            bezierPoints = [];
+
+            // プレビュー削除
+            bezierPreviewPath.remove();
+            bezierPreviewPath = null;
+        });
+        //**********************************************************************
+        //              11 SIN曲線
+        //**********************************************************************
+        // ---------- sin曲線描画 ----------
+        let sinPoints = []; // [始点, 終点, 最終マウス]
+        let previewSin = null;
+
+        svgCanvas.addEventListener("click", e => {
+            if (mode !== "sin") return;  // ← 修正
+            const rect = svgCanvas.getBoundingClientRect();
+            const x = e.clientX - rect.left;
+            const y = e.clientY - rect.top;
+
+            sinPoints.push({ x, y });
+
+            if (sinPoints.length === 1) {
+                // 始点のみ記録
+            } else if (sinPoints.length === 2) {
+                // 終点のみ記録
+                if (previewSin) svgCanvas.removeChild(previewSin);
+                previewSin = document.createElementNS("http://www.w3.org/2000/svg", "polyline");
+                previewSin.setAttribute("stroke", "blue");
+                previewSin.setAttribute("stroke-width", 2);
+                previewSin.setAttribute("fill", "none");
+                svgCanvas.appendChild(previewSin);
+            } else if (sinPoints.length === 3) {
+                // 3クリック目で確定
+                const start = sinPoints[0];
+                const end = sinPoints[1];
+                const final = sinPoints[2];
+
+                let amplitude = Math.abs(final.y - start.y);
+                // 基準線を使って正負を決める方式にしてもOK
+                if (final.y > start.y) amplitude = -amplitude; // 始点より下なら負
+
+                drawSinWaveFinal(start, end, amplitude);
+
+                // リセット
+                sinPoints = [];
+                if (previewSin) svgCanvas.removeChild(previewSin);
+                previewSin = null;
+            }
+        });
+
+        svgCanvas.addEventListener("mousemove", e => {
+            if (mode !== "sin") return;  // ← 修正
+            if (!sinPoints[0] || !sinPoints[1]) return;
+
+            const rect = svgCanvas.getBoundingClientRect();
+            const x = e.clientX - rect.left;
+            const y = e.clientY - rect.top;
+
+            let amplitude = Math.abs(y - sinPoints[0].y);
+            if (y > sinPoints[0].y) amplitude = -amplitude; // プレビューでも下なら負
+
+            drawSinPreview(sinPoints[0], sinPoints[1], amplitude);
+        });
+
+        // 描画関数例
+        function drawSinPreview(start, end, A) {
+            let W = end.x - start.x;
+            const H = start.y;
+            const step = 2;
+
+            if (W === 0) return;           // ゼロ幅なら描画しない
+            const dir = W < 0 ? -1 : 1;    // 左右どちらに向かうか
+            W = Math.abs(W);               // 絶対値に直す
+
+            const points = [];
+            for (let i = 0; i <= W; i += step) {
+                const x = start.x + i * dir;
+                const y = H - A * Math.sin((i / W) * 2 * Math.PI);
+                points.push(`${x},${y}`);
+            }
+
+            if (previewSin) previewSin.setAttribute("points", points.join(" "));
+        }
+
+        function drawSinWaveFinal(start, end, A) {
+            let W = end.x - start.x;
+            const H = start.y;
+            const step = 2;
+
+            if (W === 0) return;
+            const dir = W < 0 ? -1 : 1;
+            W = Math.abs(W);
+
+            const points = [];
+            for (let i = 0; i <= W; i += step) {
+                const x = start.x + i * dir;
+                const y = H - A * Math.sin((i / W) * 2 * Math.PI);
+                points.push(`${x},${y}`);
+            }
+
+            const polyline = document.createElementNS("http://www.w3.org/2000/svg", "polyline");
+            polyline.setAttribute("points", points.join(" "));
+            polyline.setAttribute("stroke", "blue");
+            polyline.setAttribute("stroke-width", 2);
+            polyline.setAttribute("fill", "none");
+
+            svgCanvas.appendChild(polyline);
+        }
+        //**********************************************************************
+        //              12 文字描画
+        //**********************************************************************
+
+        //HTML要素の取得（元のHTMLのIDに合わせて変更）
+        //const svgCanvas = document.getElementById("svgCanvas");他と競合
+        //const shapeSelect = document.getElementById("shapeSelect");他と競合
+
+        //**********************************************************************
+        //**********************************************************************
+        //**********************************************************************
+        //              12 文字描画
+        //**********************************************************************
+        //HTML要素の取得（元のHTMLのIDに合わせて変更）
+        //const svgCanvas = document.getElementById("svgCanvas");他と競合
+        //const shapeSelect = document.getElementById("shapeSelect");他と競合
+        /*const fontSizeInput = document.getElementById("fontSize");
+        const textColorInput = document.getElementById("textColor");
+        const textBgColorInput = document.getElementById("textBgColor");
+        const textInput = document.getElementById("textInput");*/
+
+        // 文字描画のロジック
+        svgCanvas.addEventListener("click", (e) => {
+            // 描画モードが「文字表示」でなければ処理を中断
+            if (shapeSelect.value !== "text") return;
+
+            // クリック位置を取得
+            const rect = svgCanvas.getBoundingClientRect();
+            const x = e.clientX - rect.left;
+            const y = e.clientY - rect.top;
+
+            // テキスト入力ボックスを表示し、スタイルを設定
+            textInput.style.display = "block";
+            textInput.style.left = `${e.clientX}px`;
+            textInput.style.top = `${e.clientY}px`;
+            textInput.style.fontSize = fontSizeInput.value + "px";
+            textInput.style.color = textColorInput.value;
+            textInput.style.backgroundColor = textBgColorInput.value;
+            textInput.value = "";
+            textInput.focus();
+
+            // 入力ボックスの座標を一時的に保持
+            textInput.dataset.x = x;
+            textInput.dataset.y = y;
+        });
+
+        // 入力ボックスからフォーカスが外れたとき、またはEnterキーが押されたときの処理
+        textInput.addEventListener("blur", () => {
+            drawText();
+        });
+
+        textInput.addEventListener("keydown", (e) => {
+            if (e.key === "Enter") {
+                drawText();
+            }
+        });
+
+        // テキストをSVGに描画する関数
+        function drawText() {
+            // 入力ボックスが非表示の場合、またはテキストが空の場合は処理を中断
+            if (textInput.style.display === "none" || textInput.value.trim() === "") {
+                textInput.style.display = "none";
+                return;
+            }
+
+            const x = parseFloat(textInput.dataset.x);
+            const y = parseFloat(textInput.dataset.y);
+            const textValue = textInput.value.trim();
+
+            // SVGの<text>要素を作成
+            const textEl = document.createElementNS("http://www.w3.org/2000/svg", "text");
+            textEl.setAttribute("x", x);
+            textEl.setAttribute("y", y);
+            textEl.setAttribute("font-size", fontSizeInput.value);
+            textEl.setAttribute("fill", textColorInput.value);
+            textEl.textContent = textValue;
+
+            // SVGに追加
+            svgCanvas.appendChild(textEl);
+
+            // 入力ボックスを非表示にする
+            textInput.style.display = "none";
+        }
+
+        //**********************************************************************
+        //              編集
+        //**********************************************************************
+    </script>
+</body>
+
+</html>
